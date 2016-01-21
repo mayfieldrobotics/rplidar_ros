@@ -38,6 +38,8 @@
 
 #include "ros/ros.h"
 #include "sensor_msgs/LaserScan.h"
+#include "diagnostic_msgs/DiagnosticArray.h"
+#include "diagnostic_msgs/DiagnosticStatus.h"
 #include "std_srvs/Empty.h"
 
 #include "rplidar.h" //RPLIDAR standard sdk, all-in-one header
@@ -103,10 +105,23 @@ void publish_scan(ros::Publisher *pub,
     pub->publish(scan_msg);
 }
 
-bool checkRPLIDARHealth(RPlidarDriver * drv)
+void publish_diag(const std::string &serial_port, int8_t level, const std::string &message, ros::Publisher &diag_pub) 
+{
+    diagnostic_msgs::DiagnosticArray darray;
+    diagnostic_msgs::DiagnosticStatus status;
+    status.level = level;
+    status.name = "rplidar driver";
+    status.hardware_id = serial_port;
+    status.message = message;
+    darray.status.push_back(status);
+    diag_pub.publish(darray);
+}
+
+bool checkRPLIDARHealth(RPlidarDriver * drv, std::string &message)
 {
     u_result     op_result;
     rplidar_response_device_health_t healthinfo;
+    message = "";
 
     op_result = drv->getHealth(healthinfo);
     if (IS_OK(op_result)) { 
@@ -115,6 +130,10 @@ bool checkRPLIDARHealth(RPlidarDriver * drv)
         if (healthinfo.status == RPLIDAR_STATUS_ERROR) {
             fprintf(stderr, "Error, rplidar internal error detected."
                             "Please reboot the device to retry.\n");
+
+            std::stringstream ss;
+            ss << "Internal error. Health code " << healthinfo.status;
+            message = ss.str();
             return false;
         } else {
             return true;
@@ -123,6 +142,9 @@ bool checkRPLIDARHealth(RPlidarDriver * drv)
     } else {
         fprintf(stderr, "Error, cannot retrieve rplidar health code: %x\n", 
                         op_result);
+        std::stringstream ss;
+        ss << "Cannot retrieve rplidar health code: " << op_result;
+        message = ss.str();
         return false;
     }
 }
@@ -163,6 +185,8 @@ int main(int argc, char * argv[]) {
 
     ros::NodeHandle nh;
     ros::Publisher scan_pub = nh.advertise<sensor_msgs::LaserScan>("scan", 1000);
+    ros::Publisher diag_pub = nh.advertise<diagnostic_msgs::DiagnosticArray>("diagnostics", 10);
+
     ros::NodeHandle nh_private("~");
     nh_private.param<std::string>("serial_port", serial_port, "/dev/ttyUSB0"); 
     nh_private.param<int>("serial_baudrate", serial_baudrate, 115200); 
@@ -189,13 +213,15 @@ int main(int argc, char * argv[]) {
         return -1;
     }
 
+    std::string health_message;
     // check health...
-    if (!checkRPLIDARHealth(drv)) {
+    if (!checkRPLIDARHealth(drv, health_message)) {
+        publish_diag(serial_port, diagnostic_msgs::DiagnosticStatus::ERROR, health_message, diag_pub);
         RPlidarDriver::DisposeDriver(drv);
         return -1;
     }
 
-
+    publish_diag(serial_port, diagnostic_msgs::DiagnosticStatus::OK, "", diag_pub);
 	ros::ServiceServer stop_motor_service = nh.advertiseService("stop_motor", stop_motor);
 	ros::ServiceServer start_motor_service = nh.advertiseService("start_motor", start_motor);
 	
@@ -262,6 +288,8 @@ int main(int argc, char * argv[]) {
                              frame_id, distance_factor);
                }
             } else if (op_result == RESULT_OPERATION_FAIL) {
+                publish_diag(serial_port, diagnostic_msgs::DiagnosticStatus::ERROR, 
+                        "Can't grab scan data (code RESULT_OPERATION_FAIL)", diag_pub);
                 // All the data is invalid, just publish them
                 float angle_min = DEG2RAD(0.0f);
                 float angle_max = DEG2RAD(359.0f);
