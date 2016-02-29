@@ -253,9 +253,7 @@ int main(int argc, char * argv[]) {
         scan_duration = (end_scan_time - start_scan_time).toSec() * 1e-3;
 
         if (op_result == RESULT_OK) {
-            time_since_last_scan = ros::Time::now().sec;
-            op_result = drv->ascendScanData(nodes, count);
-
+             op_result = drv->ascendScanData(nodes, count);
             float angle_min = DEG2RAD(0.0f);
             float angle_max = DEG2RAD(359.0f);
             if (op_result == RESULT_OK) {
