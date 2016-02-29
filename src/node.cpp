@@ -196,6 +196,8 @@ int main(int argc, char * argv[]) {
     ros::Publisher diag_pub = nh.advertise<diagnostic_msgs::DiagnosticArray>("diagnostics", 10);
 
     ros::NodeHandle nh_private("~");
+    int rplidar_timeout;
+    nh_private.param<int>("rplidar_timeout", rplidar_timeout, 5);
     nh_private.param<std::string>("serial_port", serial_port, "/dev/ttyUSB0"); 
     nh_private.param<int>("serial_baudrate", serial_baudrate, 115200); 
     nh_private.param<std::string>("frame_id", frame_id, "laser_frame");
@@ -239,6 +241,7 @@ int main(int argc, char * argv[]) {
     ros::Time start_scan_time;
     ros::Time end_scan_time;
     double scan_duration;
+    int time_since_last_scan = ros::Time::now().sec;
     while (ros::ok()) {
 
         rplidar_response_measurement_node_t nodes[360*2];
@@ -250,8 +253,7 @@ int main(int argc, char * argv[]) {
         scan_duration = (end_scan_time - start_scan_time).toSec() * 1e-3;
 
         if (op_result == RESULT_OK) {
-            op_result = drv->ascendScanData(nodes, count);
-
+             op_result = drv->ascendScanData(nodes, count);
             float angle_min = DEG2RAD(0.0f);
             float angle_max = DEG2RAD(359.0f);
             if (op_result == RESULT_OK) {
@@ -272,6 +274,7 @@ int main(int argc, char * argv[]) {
                             }
                         }
                     }
+
   
                     publish_scan(&scan_pub, angle_compensate_nodes, angle_compensate_nodes_count,
                              start_scan_time, scan_duration, inverted,  
@@ -295,6 +298,7 @@ int main(int argc, char * argv[]) {
                              angle_min, angle_max, 
                              frame_id, distance_factor);
                }
+               time_since_last_scan = ros::Time::now().sec;
             } else if (op_result == RESULT_OPERATION_FAIL) {
                 publish_diag(serial_port, diagnostic_msgs::DiagnosticStatus::ERROR, 
                         "Can't grab scan data (code RESULT_OPERATION_FAIL)", diag_pub);
@@ -308,6 +312,10 @@ int main(int argc, char * argv[]) {
                              frame_id, distance_factor);
             }
         }
+        if(ros::Time::now().sec - time_since_last_scan > rplidar_timeout){
+            return 124;
+        }
+
 
         ros::spinOnce();
     }
