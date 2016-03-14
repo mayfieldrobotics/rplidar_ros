@@ -20,6 +20,9 @@ notifications:
 
 install:
   - $DOCKER_READONLY
+  - sh -c "$MFR_READONLY"
+  - eval "$(ssh-agent)"
+  - ssh-add
 
 script:
   - |
