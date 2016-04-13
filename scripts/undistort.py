@@ -44,6 +44,7 @@ class LookupUndistort(object):
         # Copy raw laser msg
         filtered_scan = LaserScan()
         filtered_scan.header = msg.header
+        filtered_scan.header.stamp = rospy.get_rostime()
         filtered_scan.angle_min = msg.angle_min
         filtered_scan.angle_max = msg.angle_max
         filtered_scan.angle_increment = msg.angle_increment
