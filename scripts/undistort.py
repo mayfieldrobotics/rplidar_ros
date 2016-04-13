@@ -66,7 +66,7 @@ class LookupUndistort(object):
                 r = match[1]
                 avg_error += self.lookup_table[t][r]
                 num_error += 1
-            if num_error == 0:
+            if num_error == 0 or abs(avg_error) > 0.5:
                 filtered_scan.ranges.append(beam)
             else:
                 avg_error = avg_error/num_error
