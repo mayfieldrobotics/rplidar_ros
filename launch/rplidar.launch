@@ -1,6 +1,6 @@
-<arg name="scan_topic" default="scan"/>
-<arg name="undistort_scan" default="false"/>
 <launch>
+  <arg name="scan_topic" default="scan"/>
+  <arg name="undistort_scan" default="false"/>
   <node if="$(arg undistort_scan)" name="distortionFilter"     pkg="rplidar_ros"  type="undistort.py"/>
   <node name="rplidarNode"          pkg="rplidar_ros"  type="rplidarNode" output="screen">
   <param name="serial_port"         type="string" value="/dev/ttyUSB0"/>  
