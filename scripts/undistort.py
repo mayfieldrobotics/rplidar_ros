@@ -16,7 +16,7 @@ class LookupUndistort(object):
                  k_nearest=4,
                  max_error=0.5,
                  search_region=0.25):
-        self.pub = rospy.Publisher("/fscan", LaserScan, queue_size=10)
+        self.pub = rospy.Publisher("/scan", LaserScan, queue_size=10)
         self.k_nearest = k_nearest  # Average k-nearest error values
 
         self.lookup_tree = None  # table of (theta, range) measurements
@@ -86,5 +86,5 @@ if __name__ == '__main__':
     path = rospack.get_path('rplidar_ros')
     config_path = os.path.join(path, 'config', 'calibration_lookup.yml')
     lookup_table = LookupUndistort(config_path, 2)
-    rospy.Subscriber('/scan', LaserScan, lookup_table.laser_cb)
+    rospy.Subscriber('/raw_scan', LaserScan, lookup_table.laser_cb)
     rospy.spin()
