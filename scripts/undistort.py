@@ -6,18 +6,24 @@ import rospkg
 import os
 import numpy as np
 import math
-from numpy import argsort, sqrt
+from scipy import spatial
 
 
 class LookupUndistort(object):
 
-    def __init__(self, lookup_file, k_nearest=4, max_error=0.5):
-        self.pub = rospy.Publisher("/scan", LaserScan, queue_size=10)
+    def __init__(self,
+                 lookup_file,
+                 k_nearest=4,
+                 max_error=0.5,
+                 search_region=0.25):
+        self.pub = rospy.Publisher("/fscan", LaserScan, queue_size=10)
         self.k_nearest = k_nearest  # Average k-nearest error values
 
         self.lookup_tree = None  # table of (theta, range) measurements
         self.catesian_lookup_tree = None  # table of (x, y) measurements
         self.max_error = max_error
+        self.kdtree = None
+        self.search_region = search_region
 
         with open(lookup_file, 'r') as f:
             self.lookup_table = yaml.load(f)
@@ -36,6 +42,7 @@ class LookupUndistort(object):
 
         self.lookup_tree = np.array(data)
         self.cartesian_lookup_tree = np.array(cart_data)
+        self.kdtree = spatial.KDTree(self.cartesian_lookup_tree)
 
     def idx2radians(self, msg, idx):
         return msg.angle_min + msg.angle_increment*idx
@@ -55,14 +62,9 @@ class LookupUndistort(object):
             theta = self.idx2radians(msg, idx)
             x = np.array([beam*math.cos(theta),
                           beam*math.sin(theta)])
-            K = self.k_nearest
-            ndata = self.lookup_tree.shape[0]
-            K = K if K < ndata else ndata
-            sqd = sqrt((((self.cartesian_lookup_tree -
-                          x)[:ndata, :])**2).sum(axis=1))
-            idx = argsort(sqd)
 
-            matches = self.lookup_tree[idx[:K], :]
+            idxs = self.kdtree.query_ball_point(x, self.search_region)
+            matches = self.lookup_tree[idxs, :]
             avg_error = 0.0
             num_error = 0
             for match in matches:
@@ -83,5 +85,5 @@ if __name__ == '__main__':
     path = rospack.get_path('rplidar_ros')
     config_path = os.path.join(path, 'config', 'calibration_lookup.yml')
     lookup_table = LookupUndistort(config_path, 2)
-    rospy.Subscriber('/raw_scan', LaserScan, lookup_table.laser_cb)
+    rospy.Subscriber('/scan', LaserScan, lookup_table.laser_cb)
     rospy.spin()
