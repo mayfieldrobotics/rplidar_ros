@@ -192,7 +192,7 @@ int main(int argc, char * argv[]) {
     double distance_factor = 1.0;
 
     ros::NodeHandle nh;
-    ros::Publisher scan_pub = nh.advertise<sensor_msgs::LaserScan>("scan", 1000);
+    ros::Publisher scan_pub = nh.advertise<sensor_msgs::LaserScan>("raw_scan", 1000);
     ros::Publisher diag_pub = nh.advertise<diagnostic_msgs::DiagnosticArray>("diagnostics", 10);
 
     ros::NodeHandle nh_private("~");
