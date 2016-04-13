@@ -1,0 +1,84 @@
+#!/usr/bin/env python
+import rospy
+import yaml
+from sensor_msgs.msg import LaserScan
+import rospkg
+import os
+import numpy as np
+import math
+from numpy import argsort, sqrt
+
+
+class LookupUndistort(object):
+
+    def __init__(self, lookup_file, k_nearest=4):
+        self.pub = rospy.Publisher("/scan", LaserScan, queue_size=10)
+        self.k_nearest = k_nearest
+        self.lookup_tree = None
+        self.catesian_lookup_tree = None
+        with open(lookup_file, 'r') as f:
+            self.lookup_table = yaml.load(f)
+            self.sort_lookup_table()
+        if self.cartesian_lookup_tree is not None:
+            print "Lookup table created"
+
+    def sort_lookup_table(self):
+        data = []
+        cart_data = []
+        for key in self.lookup_table.keys():
+            for r in self.lookup_table[key]:
+                data.append([key, r])
+                cart_data.append([r*math.cos(key), r*math.sin(key)])
+
+        self.lookup_tree = np.array(data)
+        self.cartesian_lookup_tree = np.array(cart_data)
+
+    def idx2radians(self, msg, idx):
+        return msg.angle_min + msg.angle_increment*idx
+
+    def laser_cb(self, msg):
+        # Copy raw laser msg
+        filtered_scan = LaserScan()
+        filtered_scan.header = msg.header
+        filtered_scan.angle_min = msg.angle_min
+        filtered_scan.angle_max = msg.angle_max
+        filtered_scan.angle_increment = msg.angle_increment
+        filtered_scan.range_min = msg.range_min
+        filtered_scan.range_max = msg.range_max
+        filtered_scan.intensities = msg.intensities
+
+        for (idx, beam) in enumerate(msg.ranges):
+            theta = self.idx2radians(msg, idx)
+            x = np.array([beam*math.cos(theta),
+                          beam*math.sin(theta)])
+            K = self.k_nearest
+            ndata = self.lookup_tree.shape[0]
+            K = K if K < ndata else ndata
+            sqd = sqrt((((self.cartesian_lookup_tree -
+                          x)[:ndata, :])**2).sum(axis=1))
+            idx = argsort(sqd)
+
+            matches = self.lookup_tree[idx[:K], :]
+            avg_error = 0.0
+            num_error = 0
+            for match in matches:
+                t = match[0]
+                r = match[1]
+                avg_error += self.lookup_table[t][r]
+                num_error += 1
+            if num_error == 0:
+                filtered_scan.ranges.append(beam)
+            else:
+                avg_error = avg_error/num_error
+                filtered_scan.ranges.append(beam-avg_error)
+        self.pub.publish(filtered_scan)
+
+if __name__ == '__main__':
+    print "Start..."
+    rospy.init_node("undistort_scan")
+    rospack = rospkg.RosPack()
+    path = rospack.get_path('rplidar_ros')
+    config_path = os.path.join(path, 'config', 'calibration_lookup.yml')
+    lookup_table = LookupUndistort(config_path, 2)
+    rospy.Subscriber('/raw_scan', LaserScan, lookup_table.laser_cb)
+    rospy.spin()
