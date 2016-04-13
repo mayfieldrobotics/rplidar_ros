@@ -11,18 +11,22 @@ from numpy import argsort, sqrt
 
 class LookupUndistort(object):
 
-    def __init__(self, lookup_file, k_nearest=4):
+    def __init__(self, lookup_file, k_nearest=4, max_error=0.5):
         self.pub = rospy.Publisher("/scan", LaserScan, queue_size=10)
-        self.k_nearest = k_nearest
-        self.lookup_tree = None
-        self.catesian_lookup_tree = None
+        self.k_nearest = k_nearest  # Average k-nearest error values
+
+        self.lookup_tree = None  # table of (theta, range) measurements
+        self.catesian_lookup_tree = None  # table of (x, y) measurements
+        self.max_error = max_error
+
         with open(lookup_file, 'r') as f:
             self.lookup_table = yaml.load(f)
             self.sort_lookup_table()
-        if self.cartesian_lookup_tree is not None:
-            print "Lookup table created"
 
     def sort_lookup_table(self):
+        '''
+        Populate lookup data into tables
+        '''
         data = []
         cart_data = []
         for key in self.lookup_table.keys():
@@ -66,7 +70,7 @@ class LookupUndistort(object):
                 r = match[1]
                 avg_error += self.lookup_table[t][r]
                 num_error += 1
-            if num_error == 0 or abs(avg_error) > 0.5:
+            if num_error == 0 or abs(avg_error) > self.max_error:
                 filtered_scan.ranges.append(beam)
             else:
                 avg_error = avg_error/num_error
@@ -74,7 +78,6 @@ class LookupUndistort(object):
         self.pub.publish(filtered_scan)
 
 if __name__ == '__main__':
-    print "Start..."
     rospy.init_node("undistort_scan")
     rospack = rospkg.RosPack()
     path = rospack.get_path('rplidar_ros')

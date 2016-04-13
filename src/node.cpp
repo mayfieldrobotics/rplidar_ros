@@ -190,10 +190,9 @@ int main(int argc, char * argv[]) {
     bool inverted = false;
     bool angle_compensate = true;
     double distance_factor = 1.0;
+    std::string scan_topic;
 
     ros::NodeHandle nh;
-    ros::Publisher scan_pub = nh.advertise<sensor_msgs::LaserScan>("raw_scan", 1000);
-    ros::Publisher diag_pub = nh.advertise<diagnostic_msgs::DiagnosticArray>("diagnostics", 10);
 
     ros::NodeHandle nh_private("~");
     nh_private.param<std::string>("serial_port", serial_port, "/dev/ttyUSB0"); 
@@ -202,6 +201,11 @@ int main(int argc, char * argv[]) {
     nh_private.param<bool>("inverted", inverted, "false");
     nh_private.param<bool>("angle_compensate", angle_compensate, "true");
     nh_private.param<double>("distance_factor", distance_factor, 1.0);
+    nh_private.param<std::string>("scan_topic", scan_topic, "scan");
+
+    ros::Publisher scan_pub = nh.advertise<sensor_msgs::LaserScan>(scan_topic, 1000);
+    ros::Publisher diag_pub = nh.advertise<diagnostic_msgs::DiagnosticArray>("diagnostics", 10);
+
 	
     u_result     op_result;
    

@@ -40,6 +40,6 @@ install(DIRECTORY launch rviz sdk
   USE_SOURCE_PERMISSIONS
 )
 
-catkin_install_python(PROGRAM scripts/undistort.py
+catkin_install_python(PROGRAMS scripts/undistort.py
     DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
     )
