@@ -12,7 +12,7 @@ class LookupUndistort(object):
     def __init__(self,
                  lookup_file,
                  k_nearest=1,
-                 max_error=0.25,
+                 max_error=0.5,
                  search_region=0.25):
         self.pub = rospy.Publisher("/scan", LaserScan, queue_size=10)
         self.max_error = max_error
@@ -31,12 +31,16 @@ class LookupUndistort(object):
             rs = range_table.keys()
             errors = []
             for r in range_table:
-                errors.append(range_table[r])
+                e = range_table[r]
+                gt = r - e
+                error = gt/r
+                errors.append(error)
             fc = None
             fl = None
             if len(rs) > 3:
                 fc = interpolate.interp1d(rs, errors, kind='cubic')
-#                fl = interpolate.interp1d(rs, errors, kind='linear', bounds_error=False, fill_value="extrapolate")
+#                fl = interpolate.interp1d(rs, errors, kind='linear',
+#                bounds_error=False, fill_value="extrapolate")
             else:
                 continue
             self.lookup_table[theta] = (fc, fl)
@@ -72,11 +76,12 @@ class LookupUndistort(object):
             try:
                 error = fc(beam)
             except:
-                error = 0.0
+                maxr = max(self.lookup_table[keys].keys())
+                error =  self.lookup_table[keys][maxr]
             if abs(error) > self.max_error:
                 filtered_scan.ranges.append(beam)
             else:
-                filtered_scan.ranges.append(beam-error)
+                filtered_scan.ranges.append(error*beam)
         self.pub.publish(filtered_scan)
 
 if __name__ == '__main__':
