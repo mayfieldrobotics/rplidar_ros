@@ -17,8 +17,8 @@ class LookupUndistort(object):
         self.pub = rospy.Publisher("/scan", LaserScan, queue_size=10)
         with open(lookup_file, 'r') as f:
             self.lookup_dict = yaml.load(f)
-            self.sort_lookup_table()
             self.lookup_table = {}
+            self.sort_lookup_table()
 
     def sort_lookup_table(self):
         '''
@@ -32,6 +32,13 @@ class LookupUndistort(object):
                 errors.append(range_table[r])
             f = interpolate.interp1d(rs, errors, kind='cubic')
             self.lookup_table[theta] = f
+
+    def fill_gap(self, theta):
+        best_key = float('inf')
+        for key in self.lookup_table.keys():
+            if best_key > abs(key - theta):
+                best_key = key
+        self.lookup_table[theta] = self.lookup_table[best_key]
 
     def idx2radians(self, msg, idx):
         return msg.angle_min + msg.angle_increment*idx
@@ -50,6 +57,8 @@ class LookupUndistort(object):
 
         for (idx, beam) in enumerate(msg.ranges):
             theta = self.idx2radians(msg, idx)
+            if theta not in self.lookup_table:
+                self.fill_gap[theta]
             fr = self.lookup_table[theta]
             error = fr(beam)
             if abs(error) > self.max_error:
