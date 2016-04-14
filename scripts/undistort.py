@@ -5,7 +5,7 @@ from sensor_msgs.msg import LaserScan
 import rospkg
 import os
 from scipy import interpolate
-
+import math
 
 class LookupUndistort(object):
 
@@ -29,16 +29,20 @@ class LookupUndistort(object):
         for theta in self.lookup_dict:
             range_table = self.lookup_dict[theta]
             rs = range_table.keys()
+            new_rs = []
             errors = []
             for r in range_table:
                 e = range_table[r]
                 gt = r - e
                 error = gt/r
+                if error < 0.0 or error > 1.3:
+                    continue 
                 errors.append(error)
+                new_rs.append(r)
             fc = None
             fl = None
-            if len(rs) > 3:
-                fc = interpolate.interp1d(rs, errors, kind='cubic')
+            if len(new_rs) > 1:
+                fc = interpolate.interp1d(new_rs, errors, kind='linear')
 #                fl = interpolate.interp1d(rs, errors, kind='linear',
 #                bounds_error=False, fill_value="extrapolate")
             else:
@@ -51,6 +55,7 @@ class LookupUndistort(object):
             if best_key > abs(key - theta):
                 best_key = key
         self.lookup_table[theta] = self.lookup_table[best_key]
+        self.lookup_dict[theta] = self.lookup_dict[best_key]
 
     def idx2radians(self, msg, idx):
         return msg.angle_min + msg.angle_increment*idx
@@ -69,19 +74,26 @@ class LookupUndistort(object):
 
         for (idx, beam) in enumerate(msg.ranges):
             theta = self.idx2radians(msg, idx)
+            if (theta > 1.79 and theta < 2.4) or \
+               (theta > -2.4 and theta <  -1.79):
+                filtered_scan.ranges.append(float('inf'))
+                continue
             if theta not in self.lookup_table:
                 self.fill_gap(theta)
             (fc, fl) = self.lookup_table[theta]
             error = 0.0
+            
             try:
                 error = fc(beam)
             except:
-                maxr = max(self.lookup_table[keys].keys())
-                error =  self.lookup_table[keys][maxr]
-            if abs(error) > self.max_error:
-                filtered_scan.ranges.append(beam)
-            else:
-                filtered_scan.ranges.append(error*beam)
+                maxr = max(self.lookup_dict[theta].keys())
+                e =  self.lookup_dict[theta][maxr]
+                error = (maxr - e)/maxr
+            if beam == float('inf') or error < 0.0 or error > 1.3:
+                filtered_scan.ranges.append(float('inf'))     
+                continue
+            filtered_scan.ranges.append(beam)
+
         self.pub.publish(filtered_scan)
 
 if __name__ == '__main__':
