@@ -12,13 +12,15 @@ class LookupUndistort(object):
     def __init__(self,
                  lookup_file,
                  k_nearest=1,
-                 max_error=0.5,
+                 max_error=0.25,
                  search_region=0.25):
         self.pub = rospy.Publisher("/scan", LaserScan, queue_size=10)
+        self.max_error = max_error
         with open(lookup_file, 'r') as f:
             self.lookup_dict = yaml.load(f)
             self.lookup_table = {}
             self.sort_lookup_table()
+            print "Lookup table ready..."
 
     def sort_lookup_table(self):
         '''
@@ -30,8 +32,14 @@ class LookupUndistort(object):
             errors = []
             for r in range_table:
                 errors.append(range_table[r])
-            f = interpolate.interp1d(rs, errors, kind='cubic')
-            self.lookup_table[theta] = f
+            fc = None
+            fl = None
+            if len(rs) > 3:
+                fc = interpolate.interp1d(rs, errors, kind='cubic')
+#                fl = interpolate.interp1d(rs, errors, kind='linear', bounds_error=False, fill_value="extrapolate")
+            else:
+                continue
+            self.lookup_table[theta] = (fc, fl)
 
     def fill_gap(self, theta):
         best_key = float('inf')
@@ -58,9 +66,13 @@ class LookupUndistort(object):
         for (idx, beam) in enumerate(msg.ranges):
             theta = self.idx2radians(msg, idx)
             if theta not in self.lookup_table:
-                self.fill_gap[theta]
-            fr = self.lookup_table[theta]
-            error = fr(beam)
+                self.fill_gap(theta)
+            (fc, fl) = self.lookup_table[theta]
+            error = 0.0
+            try:
+                error = fc(beam)
+            except:
+                error = 0.0
             if abs(error) > self.max_error:
                 filtered_scan.ranges.append(beam)
             else:
