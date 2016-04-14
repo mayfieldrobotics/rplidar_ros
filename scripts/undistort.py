@@ -4,45 +4,34 @@ import yaml
 from sensor_msgs.msg import LaserScan
 import rospkg
 import os
-import numpy as np
-import math
-from scipy import spatial
+from scipy import interpolate
 
 
 class LookupUndistort(object):
 
     def __init__(self,
                  lookup_file,
-                 k_nearest=4,
+                 k_nearest=1,
                  max_error=0.5,
                  search_region=0.25):
         self.pub = rospy.Publisher("/scan", LaserScan, queue_size=10)
-        self.k_nearest = k_nearest  # Average k-nearest error values
-
-        self.lookup_tree = None  # table of (theta, range) measurements
-        self.catesian_lookup_tree = None  # table of (x, y) measurements
-        self.max_error = max_error
-        self.kdtree = None
-        self.search_region = search_region
-
         with open(lookup_file, 'r') as f:
-            self.lookup_table = yaml.load(f)
+            self.lookup_dict = yaml.load(f)
             self.sort_lookup_table()
+            self.lookup_table = {}
 
     def sort_lookup_table(self):
         '''
         Populate lookup data into tables
         '''
-        data = []
-        cart_data = []
-        for key in self.lookup_table.keys():
-            for r in self.lookup_table[key]:
-                data.append([key, r])
-                cart_data.append([r*math.cos(key), r*math.sin(key)])
-
-        self.lookup_tree = np.array(data)
-        self.cartesian_lookup_tree = np.array(cart_data)
-        self.kdtree = spatial.KDTree(self.cartesian_lookup_tree)
+        for theta in self.lookup_dict:
+            range_table = self.lookup_dict[theta]
+            rs = range_table.keys()
+            errors = []
+            for r in range_table:
+                errors.append(range_table[r])
+            f = interpolate.interp1d(rs, errors, kind='cubic')
+            self.lookup_table[theta] = f
 
     def idx2radians(self, msg, idx):
         return msg.angle_min + msg.angle_increment*idx
@@ -61,23 +50,12 @@ class LookupUndistort(object):
 
         for (idx, beam) in enumerate(msg.ranges):
             theta = self.idx2radians(msg, idx)
-            x = np.array([beam*math.cos(theta),
-                          beam*math.sin(theta)])
-
-            idxs = self.kdtree.query_ball_point(x, self.search_region)
-            matches = self.lookup_tree[idxs, :]
-            avg_error = 0.0
-            num_error = 0
-            for match in matches:
-                t = match[0]
-                r = match[1]
-                avg_error += self.lookup_table[t][r]
-                num_error += 1
-            if num_error == 0 or abs(avg_error) > self.max_error:
+            fr = self.lookup_table[theta]
+            error = fr(beam)
+            if abs(error) > self.max_error:
                 filtered_scan.ranges.append(beam)
             else:
-                avg_error = avg_error/num_error
-                filtered_scan.ranges.append(beam-avg_error)
+                filtered_scan.ranges.append(beam-error)
         self.pub.publish(filtered_scan)
 
 if __name__ == '__main__':
@@ -85,6 +63,6 @@ if __name__ == '__main__':
     rospack = rospkg.RosPack()
     path = rospack.get_path('rplidar_ros')
     config_path = os.path.join(path, 'config', 'calibration_lookup.yml')
-    lookup_table = LookupUndistort(config_path, 2)
+    lookup_table = LookupUndistort(config_path)
     rospy.Subscriber('/raw_scan', LaserScan, lookup_table.laser_cb)
     rospy.spin()
