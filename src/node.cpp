@@ -38,6 +38,8 @@
 
 #include "ros/ros.h"
 #include "sensor_msgs/LaserScan.h"
+#include "diagnostic_msgs/DiagnosticArray.h"
+#include "diagnostic_msgs/DiagnosticStatus.h"
 #include "std_srvs/Empty.h"
 
 #include "rplidar.h" //RPLIDAR standard sdk, all-in-one header
@@ -57,7 +59,8 @@ void publish_scan(ros::Publisher *pub,
                   size_t node_count, ros::Time start,
                   double scan_time, bool inverted, 
                   float angle_min, float angle_max, 
-                  std::string frame_id)
+                  std::string frame_id,
+                  double distance_factor)
 {
     static int scan_count = 0;
     sensor_msgs::LaserScan scan_msg;
@@ -74,7 +77,7 @@ void publish_scan(ros::Publisher *pub,
     scan_msg.scan_time = scan_time;
     scan_msg.time_increment = scan_time / (double)(node_count-1);
 
-    scan_msg.range_min = 0.15;
+    scan_msg.range_min = 0.19;
     scan_msg.range_max = 6.;
 
     scan_msg.intensities.resize(node_count);
@@ -82,19 +85,27 @@ void publish_scan(ros::Publisher *pub,
     if (!inverted) { // assumes scan window at the top
         for (size_t i = 0; i < node_count; i++) {
             float read_value = (float) nodes[i].distance_q2/4.0f/1000;
+            float range = read_value * distance_factor;
+            if (range < scan_msg.range_min)
+                range = std::numeric_limits<float>::infinity();
+
             if (read_value == 0.0)
                 scan_msg.ranges[i] = std::numeric_limits<float>::infinity();
             else
-                scan_msg.ranges[i] = read_value;
+                scan_msg.ranges[i] = range;
             scan_msg.intensities[i] = (float) (nodes[i].sync_quality >> 2);
         }
     } else {
         for (size_t i = 0; i < node_count; i++) {
             float read_value = (float)nodes[i].distance_q2/4.0f/1000;
+            float range = read_value * distance_factor;
+            if (range < scan_msg.range_min)
+                range = std::numeric_limits<float>::infinity();
+
             if (read_value == 0.0)
                 scan_msg.ranges[node_count-1-i] = std::numeric_limits<float>::infinity();
             else
-                scan_msg.ranges[node_count-1-i] = read_value;
+                scan_msg.ranges[node_count-1-i] = range;
             scan_msg.intensities[node_count-1-i] = (float) (nodes[i].sync_quality >> 2);
         }
     }
@@ -102,10 +113,23 @@ void publish_scan(ros::Publisher *pub,
     pub->publish(scan_msg);
 }
 
-bool checkRPLIDARHealth(RPlidarDriver * drv)
+void publish_diag(const std::string &serial_port, int8_t level, const std::string &message, ros::Publisher &diag_pub) 
+{
+    diagnostic_msgs::DiagnosticArray darray;
+    diagnostic_msgs::DiagnosticStatus status;
+    status.level = level;
+    status.name = "rplidar driver";
+    status.hardware_id = serial_port;
+    status.message = message;
+    darray.status.push_back(status);
+    diag_pub.publish(darray);
+}
+
+bool checkRPLIDARHealth(RPlidarDriver * drv, std::string &message)
 {
     u_result     op_result;
     rplidar_response_device_health_t healthinfo;
+    message = "";
 
     op_result = drv->getHealth(healthinfo);
     if (IS_OK(op_result)) { 
@@ -114,6 +138,10 @@ bool checkRPLIDARHealth(RPlidarDriver * drv)
         if (healthinfo.status == RPLIDAR_STATUS_ERROR) {
             fprintf(stderr, "Error, rplidar internal error detected."
                             "Please reboot the device to retry.\n");
+
+            std::stringstream ss;
+            ss << "Internal error. Health code " << healthinfo.status;
+            message = ss.str();
             return false;
         } else {
             return true;
@@ -122,6 +150,9 @@ bool checkRPLIDARHealth(RPlidarDriver * drv)
     } else {
         fprintf(stderr, "Error, cannot retrieve rplidar health code: %x\n", 
                         op_result);
+        std::stringstream ss;
+        ss << "Cannot retrieve rplidar health code: " << op_result;
+        message = ss.str();
         return false;
     }
 }
@@ -158,15 +189,19 @@ int main(int argc, char * argv[]) {
     std::string frame_id;
     bool inverted = false;
     bool angle_compensate = true;
+    double distance_factor = 1.0;
 
     ros::NodeHandle nh;
     ros::Publisher scan_pub = nh.advertise<sensor_msgs::LaserScan>("scan", 1000);
+    ros::Publisher diag_pub = nh.advertise<diagnostic_msgs::DiagnosticArray>("diagnostics", 10);
+
     ros::NodeHandle nh_private("~");
     nh_private.param<std::string>("serial_port", serial_port, "/dev/ttyUSB0"); 
     nh_private.param<int>("serial_baudrate", serial_baudrate, 115200); 
     nh_private.param<std::string>("frame_id", frame_id, "laser_frame");
     nh_private.param<bool>("inverted", inverted, "false");
     nh_private.param<bool>("angle_compensate", angle_compensate, "true");
+    nh_private.param<double>("distance_factor", distance_factor, 1.0);
 	
     u_result     op_result;
    
@@ -186,13 +221,15 @@ int main(int argc, char * argv[]) {
         return -1;
     }
 
+    std::string health_message;
     // check health...
-    if (!checkRPLIDARHealth(drv)) {
+    if (!checkRPLIDARHealth(drv, health_message)) {
+        publish_diag(serial_port, diagnostic_msgs::DiagnosticStatus::ERROR, health_message, diag_pub);
         RPlidarDriver::DisposeDriver(drv);
         return -1;
     }
 
-
+    publish_diag(serial_port, diagnostic_msgs::DiagnosticStatus::OK, "", diag_pub);
 	ros::ServiceServer stop_motor_service = nh.advertiseService("stop_motor", stop_motor);
 	ros::ServiceServer start_motor_service = nh.advertiseService("start_motor", start_motor);
 	
@@ -239,7 +276,7 @@ int main(int argc, char * argv[]) {
                     publish_scan(&scan_pub, angle_compensate_nodes, angle_compensate_nodes_count,
                              start_scan_time, scan_duration, inverted,  
                              angle_min, angle_max, 
-                             frame_id);
+                             frame_id, distance_factor);
                 } else {
                     int start_node = 0, end_node = 0;
                     int i = 0;
@@ -256,9 +293,11 @@ int main(int argc, char * argv[]) {
                     publish_scan(&scan_pub, &nodes[start_node], end_node-start_node +1, 
                              start_scan_time, scan_duration, inverted,  
                              angle_min, angle_max, 
-                             frame_id);
+                             frame_id, distance_factor);
                }
             } else if (op_result == RESULT_OPERATION_FAIL) {
+                publish_diag(serial_port, diagnostic_msgs::DiagnosticStatus::ERROR, 
+                        "Can't grab scan data (code RESULT_OPERATION_FAIL)", diag_pub);
                 // All the data is invalid, just publish them
                 float angle_min = DEG2RAD(0.0f);
                 float angle_max = DEG2RAD(359.0f);
@@ -266,7 +305,7 @@ int main(int argc, char * argv[]) {
                 publish_scan(&scan_pub, nodes, count, 
                              start_scan_time, scan_duration, inverted,  
                              angle_min, angle_max, 
-                             frame_id);
+                             frame_id, distance_factor);
             }
         }
 
